@@ -1,0 +1,4 @@
+Action,Current Variation Name,New Variation Name,Price,Stock,Image URL
+KEEP,Existing Variation,,,,
+UPDATE,Old Variation,New Variation,20.00,0,
+ADD,,New Product,15.50,3,
