@@ -1,4 +1,4 @@
-# Shopee Variation Import & Export Tools v2.3.0
+# Shopee Variation Import & Export Tools v2.3.1
 
 This Tampermonkey userscript adds a panel above **Variation List** in Shopee Seller Centre. If that section has not loaded yet, the panel appears at the bottom-right.
 
@@ -34,15 +34,17 @@ If Shopee initially shows only **“Variations Available”**, the script opens 
 `Action,Current Variation Name,New Variation Name,Price,Stock,Image URL`
 
 - `KEEP`: makes no changes. This is the default action.
-- `UPDATE`: Current Variation Name must exactly match Shopee. New Variation Name is optional. Blank Price or Stock keeps the current value. Image URL is optional.
+- `UPDATE`: Current Variation Name must exactly match Shopee. New Variation Name is optional. Blank Price or Stock keeps the current value. A blank Image URL REMOVES the existing variation image; a supplied URL uploads an image.
 - `ADD`: New Variation Name, Price, and Stock are required. Image URL is optional.
 - Names are limited to 20 characters.
 - The final listing is limited to 100 variations.
-- DELETE is intentionally not supported.
+- Deleting variation rows is intentionally not supported. UPDATE with blank Image URL removes only the variation image.
 
 Both `.xlsx` and `.csv` files can be imported. **Export Excel** creates a ready-to-edit workbook with 100 rows and Action dropdowns. The Excel feature loads the pinned ExcelJS 4.4.0 browser library automatically through Tampermonkey, so the Seller Centre computer needs internet access when the script starts.
 
 ## Images
+
+For UPDATE rows, blank Image URL means remove the existing image. KEEP rows leave images unchanged; ADD rows may omit an image. Export leaves Image URL blank, so changing an exported row to UPDATE also requests image removal unless you supply a URL. Preview and Apply confirmation show this behavior. Removal uses Shopee's per-image delete control and stops apply mode if removal cannot be confirmed.
 
 Only direct, public `http://` or `https://` image links are supported. The script downloads a supplied link only after you click **Apply Changes** and confirm. The broad Tampermonkey `@connect *` permission is required because image links may come from different websites. Existing Shopee images are never downloaded or included in Export CSV.
 

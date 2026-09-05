@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Shopee Variation Import & Export Tools
 // @namespace    local.shopee.variation.tools
-// @version      2.3.0
+// @version      2.3.1
 // @description  Export public Shopee variations, or import/export Seller Centre KEEP, UPDATE, and ADD changes.
 // @match        https://seller.shopee.com.my/*
 // @match        https://shopee.com.my/*
@@ -17,7 +17,7 @@
   if (window.__shopeeVariationCsvToolsLoaded) return;
   window.__shopeeVariationCsvToolsLoaded = true;
 
-  const VERSION = "2.3.0";
+  const VERSION = "2.3.1";
   const TOOL_ID = "shopee-variation-csv-tools";
   const MAX_VARIATIONS = 100;
   const LOG_PREFIX = "[Shopee Variation Tools]";
@@ -551,6 +551,7 @@
       if (!name || !priceInput || !stockInput) continue;
       rows.push({
         name, priceInput, stockInput,
+        imageContainer: nameWrapper,
         imageInput: nameWrapper.querySelector(".variation-image-manager input[type='file']"),
         price: normalizeText(priceInput.value || priceInput.getAttribute("modelvalue")),
         stock: normalizeText(stockInput.value || stockInput.getAttribute("modelvalue")),
@@ -665,11 +666,48 @@
     }
   }
 
+  async function removeVariationImage(rendered, imported) {
+    if (imported.action !== "UPDATE" || imported.imageUrl || !state.fillMode) return;
+    const key = nameKey(imported.targetName);
+    if (state.appliedImages.has(key) || state.imageInFlight.has(key)) return;
+    const container = rendered.imageContainer;
+    if (!container?.isConnected) return;
+    const imageSelector = ".variation-image-manager .shopee-image-manager__image";
+    const existing = container.querySelector(imageSelector);
+    if (!existing) { state.appliedImages.add(key); return; }
+    const item = existing.closest(".shopee-image-manager__itembox");
+    const remove = item?.querySelector(".shopee-image-manager__icon--delete");
+    if (!remove || remove.closest("[disabled],[aria-disabled='true']")) {
+      state.fillMode = false;
+      throw new Error(`Image removal control unavailable for "${rendered.name}"`);
+    }
+    state.imageInFlight.add(key);
+    try {
+      if (!state.fillMode) return;
+      remove.click();
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        await sleep(150);
+        if (!state.fillMode) return;
+        const fresh = getRenderedRows().find((row) => nameKey(row.name) === key);
+        if (fresh?.imageContainer?.isConnected && !fresh.imageContainer.querySelector(imageSelector)) {
+          state.appliedImages.add(key);
+          log(`Removed variation image for "${rendered.name}"`);
+          return;
+        }
+      }
+      state.fillMode = false;
+      throw new Error(`Image removal was not confirmed for "${rendered.name}". Review the page before continuing`);
+    } finally {
+      state.imageInFlight.delete(key);
+    }
+  }
+
   async function fillRenderedRows() {
     if (!state.fillMode || !state.actionByTarget.size || state.filling) return;
     state.filling = true;
     try {
       for (const rendered of getRenderedRows()) {
+        if (!state.fillMode) break;
         const imported = state.actionByTarget.get(nameKey(rendered.name));
         if (!imported || imported.errors.length) continue;
         if (imported.price) setNativeInputValue(rendered.priceInput, imported.price);
@@ -677,6 +715,7 @@
         state.appliedFields.add(nameKey(imported.targetName));
         state.detectedByName.set(nameKey(rendered.name), { name: rendered.name, price: imported.price || rendered.price, stock: imported.stock !== "" ? imported.stock : rendered.stock });
         if (imported.imageUrl) await uploadImage(rendered, imported);
+        else if (imported.action === "UPDATE") await removeVariationImage(rendered, imported);
       }
     } finally {
       state.filling = false;
@@ -745,9 +784,11 @@
     const updates = actions.filter((row) => row.action === "UPDATE").length;
     const adds = actions.filter((row) => row.action === "ADD").length;
     const images = actions.filter((row) => row.imageUrl).length;
+    const removals = actions.filter((row) => row.action === "UPDATE" && !row.imageUrl).length;
     const confirmed = window.confirm(
       `Apply ${updates} UPDATE and ${adds} ADD action(s)?\n\n` +
       `${images} image(s) will be downloaded from the imported links and sent to Shopee as their rows appear.\n\n` +
+      `Existing images will be removed for ${removals} UPDATE row(s) with blank Image URL.\n\n` +
       "The script will NOT click Shopee Save. Review everything and save manually."
     );
     if (!confirmed) { log("Apply cancelled by user"); return; }
@@ -876,7 +917,7 @@
         : "Maximum 100 final variations. Action defaults to KEEP. The script never clicks Shopee Save.";
       sheet.getCell("A2").style = { fill: { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF3EF" } }, font: { italic: true, color: { argb: "FF7A2E1C" } }, alignment: { vertical: "middle" } };
       sheet.getRow(2).height = 24;
-      sheet.getRow(3).values = ["KEEP, UPDATE, or ADD", "Existing name for UPDATE; max 20 characters", "Required for ADD; optional rename for UPDATE; max 20 characters", "ADD: required. UPDATE: blank keeps current. Greater than 0; max 2 decimals", "ADD: required. UPDATE: blank keeps current. Whole number; 0 or higher", "Optional direct public image link for UPDATE or ADD; export leaves this blank"];
+      sheet.getRow(3).values = ["KEEP, UPDATE, or ADD", "Existing name for UPDATE; max 20 characters", "Required for ADD; optional rename for UPDATE; max 20 characters", "ADD: required. UPDATE: blank keeps current. Greater than 0; max 2 decimals", "ADD: required. UPDATE: blank keeps current. Whole number; 0 or higher", "UPDATE: blank REMOVES existing image; URL uploads image. ADD: optional URL. KEEP: unchanged. Export leaves blank"];
       sheet.getRow(3).height = 70;
       sheet.getRow(3).eachCell((cell) => { cell.style = { fill: { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF8F5" } }, font: { color: { argb: "FF6B4A42" }, size: 9 }, alignment: { wrapText: true, vertical: "middle" } }; });
       sheet.getRow(5).values = ["Action", "Current Variation Name", "New Variation Name", "Price", "Stock", "Image URL"];
@@ -973,7 +1014,7 @@
       if (errors.length) status = errors.join("; ");
       const tr = document.createElement("tr");
       if (errors.length) tr.className = "svt-row-error";
-      for (const value of [row.action, row.currentName, row.newName, row.price, row.stock, row.imageUrl ? "Provided" : "", status]) {
+      for (const value of [row.action, row.currentName, row.newName, row.price, row.stock, row.action === "KEEP" ? "Keep image" : row.imageUrl ? "Upload URL" : row.action === "UPDATE" ? "REMOVE image" : "No image", status]) {
         const td = document.createElement("td"); td.textContent = value; tr.append(td);
       }
       body.append(tr);
@@ -1030,7 +1071,7 @@
       </div>
       <input class="svt-file" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
       <div class="svt-status"></div>
-      <div class="svt-message">Excel and CSV are both supported. Excel keeps the Action dropdown; DELETE is not supported.</div>
+      <div class="svt-message">UPDATE + blank Image URL REMOVES the existing image. KEEP leaves it unchanged. Excel and CSV are supported; deleting variations is not supported.</div>
       <div class="svt-preview" hidden></div>`;
   }
 
@@ -1122,7 +1163,11 @@
     state.scheduled = true;
     setTimeout(() => {
       state.scheduled = false;
-      ensurePanel(); autoExpandVariationList(); autoOpenPublicVariationSelector(); updateDetectedCache(); void fillRenderedRows();
+      ensurePanel(); autoExpandVariationList(); autoOpenPublicVariationSelector(); updateDetectedCache(); void fillRenderedRows().catch((error) => {
+        state.fillMode = false;
+        console.error(LOG_PREFIX, error);
+        showMessage(`Apply stopped: ${error.message}`, "error");
+      });
     }, 180);
   }
 
